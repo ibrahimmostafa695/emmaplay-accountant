@@ -927,6 +927,9 @@ async function exportElementToPDF(el, filename){
 /* =========================================================================
    AUTH
 ========================================================================= */
+document.getElementById('login-show-password').addEventListener('change', function(){
+  document.getElementById('login-password').type = this.checked ? 'text' : 'password';
+});
 document.getElementById('login-form').addEventListener('submit', function(e){
   e.preventDefault();
   const u = document.getElementById('login-username').value.trim();
@@ -1225,11 +1228,11 @@ function tt(key){ return (REPORT_I18N[currentLang] && REPORT_I18N[currentLang][k
 
 const LOGIN_I18N = {
   ar:{ subtitle:'النظام المحاسبي — تسجيل الدخول', username:'اسم المستخدم', password:'كلمة المرور',
-       submit:'دخول', forgot:'نسيت كلمة المرور؟',
+       submit:'دخول', forgot:'نسيت كلمة المرور؟', showPassword:'إظهار كلمة المرور',
        hint:'هذا النظام يعمل من المتصفح ويحفظ بياناته في قاعدة بيانات Firebase مشتركة. البيانات مش مشفّرة بحماية على مستوى المستخدم، الحماية الوحيدة هي شاشة الدخول دي — فمناسب للاستخدام الداخلي بين فريقك بس مش لبيانات حساسة جدًا.',
        toggle:'EN' },
   en:{ subtitle:'Accounting System — Sign in', username:'Username', password:'Password',
-       submit:'Sign in', forgot:'Forgot password?',
+       submit:'Sign in', forgot:'Forgot password?', showPassword:'Show password',
        hint:'This system runs in the browser and stores its data in a shared Firebase database. Data is not user-level encrypted — the login screen is the only protection — so it is suitable for internal team use, not highly sensitive data.',
        toggle:'العربية' }
 };
@@ -1257,6 +1260,7 @@ function applyLanguage(){
   const subBtn = document.getElementById('login-submit-btn'); if(subBtn) subBtn.textContent = L.submit;
   const forgotBtn = document.getElementById('forgot-password-link'); if(forgotBtn) forgotBtn.textContent = L.forgot;
   const hintEl = document.getElementById('login-hint-text'); if(hintEl) hintEl.textContent = L.hint;
+  const showPwLbl = document.getElementById('login-show-password-label'); if(showPwLbl) showPwLbl.textContent = L.showPassword;
   const loginToggleBtn = document.getElementById('login-lang-toggle-btn'); if(loginToggleBtn) loginToggleBtn.textContent = L.toggle;
 }
 document.getElementById('lang-toggle-btn').addEventListener('click', ()=>{
