@@ -290,6 +290,7 @@ const STORAGE_KEYS = {
   coa:'jv-coa-v1',
   costCenters:'jv-costcenters-v1',
   entries:'jv-entries-v1',
+  entriesIndex:'jv-entries-index-v1',
   logo:'jv-logo-v1',
   auditLog:'jv-audit-log-v1',
   backupEmail:'jv-backup-email-v1',
@@ -544,26 +545,34 @@ const FS_BASE = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT
 // Journal entries are stored ONE DOCUMENT PER ENTRY (not bundled together), because
 // Firestore documents have a ~1MB size ceiling and attachments can be sizeable —
 // bundling every entry into a single document risked a whole-collection save failure.
+// We keep a small INDEX (just the list of entry IDs) in app_data, and fetch each
+// entry by its own document path — this avoids Firestore's "list documents" query
+// entirely, which some project security-rule configurations reject (403) even when
+// plain get/patch/delete by explicit path work fine.
 const FS_ENTRIES_BASE = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/default/documents/journal_entries`;
-async function loadAllEntryDocs(){
-  const entries = [];
-  let pageToken = null;
+async function getEntryDocById(id){
   try{
-    do{
-      const url = `${FS_ENTRIES_BASE}?pageSize=300` + (pageToken?`&pageToken=${encodeURIComponent(pageToken)}`:'');
-      const res = await fetch(url);
-      if(!res.ok) break;
-      const data = await res.json();
-      (data.documents||[]).forEach(doc=>{
-        try{
-          const raw = doc.fields && doc.fields.data && doc.fields.data.stringValue;
-          if(raw) entries.push(JSON.parse(raw));
-        }catch(e){ /* skip corrupt doc */ }
-      });
-      pageToken = data.nextPageToken || null;
-    }while(pageToken);
-  }catch(e){ /* network issue — return whatever we already collected */ }
-  return entries;
+    const res = await fetch(`${FS_ENTRIES_BASE}/${encodeURIComponent(id)}`);
+    if(!res.ok) return null;
+    const data = await res.json();
+    const raw = data.fields && data.fields.data && data.fields.data.stringValue;
+    return raw ? JSON.parse(raw) : null;
+  }catch(e){ return null; }
+}
+async function addToEntriesIndex(id){
+  const ids = await loadKey(STORAGE_KEYS.entriesIndex, []);
+  if(!ids.includes(id)){ ids.push(id); await saveKey(STORAGE_KEYS.entriesIndex, ids); }
+}
+async function removeFromEntriesIndex(id){
+  const ids = await loadKey(STORAGE_KEYS.entriesIndex, []);
+  const filtered = ids.filter(x=>x!==id);
+  if(filtered.length!==ids.length){ await saveKey(STORAGE_KEYS.entriesIndex, filtered); }
+}
+async function loadAllEntryDocs(){
+  const ids = await loadKey(STORAGE_KEYS.entriesIndex, []);
+  if(!Array.isArray(ids) || ids.length===0) return [];
+  const results = await Promise.all(ids.map(id=>getEntryDocById(id)));
+  return results.filter(e=>e!==null);
 }
 async function saveEntryDoc(entry){
   try{
@@ -572,11 +581,13 @@ async function saveEntryDoc(entry){
       method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
     });
     if(!res.ok) throw new Error('save entry failed');
+    await addToEntriesIndex(entry.id);
   }catch(e){ showToast('حصل خطأ أثناء حفظ القيد — ممكن يكون المرفق كبير قوي، جرب صورة أصغر'); }
 }
 async function deleteEntryDoc(id){
   try{
     await fetch(`${FS_ENTRIES_BASE}/${encodeURIComponent(id)}`, {method:'DELETE'});
+    await removeFromEntriesIndex(id);
   }catch(e){ showToast('حصل خطأ أثناء حذف القيد'); }
 }
 
@@ -648,13 +659,17 @@ async function initApp(){
   if(!DB.costCenters){ DB.costCenters = DEFAULT_COST_CENTERS; await saveCostCenters(); }
 
   DB.entries = await loadAllEntryDocs();
-  if(DB.entries.length===0){
+  try{
     const legacy = await loadKey(STORAGE_KEYS.entries, []);
-    if(legacy.length>0){
-      for(const e of legacy){ await saveEntryDoc(e); }
-      DB.entries = legacy;
+    if(Array.isArray(legacy) && legacy.length>0){
+      const knownIds = new Set(DB.entries.map(e=>e.id));
+      const missing = legacy.filter(e=>!knownIds.has(e.id));
+      if(missing.length>0){
+        await Promise.all(missing.map(e=>saveEntryDoc(e)));
+        DB.entries = DB.entries.concat(missing);
+      }
     }
-  }
+  }catch(e){ /* legacy blob unreadable — proceed with whatever loadAllEntryDocs found */ }
   DB.logo = await loadKey(STORAGE_KEYS.logo, DEFAULT_LOGO);
   DB.auditLog = await loadKey(STORAGE_KEYS.auditLog, []);
   DB.backupEmail = await loadKey(STORAGE_KEYS.backupEmail, '');
