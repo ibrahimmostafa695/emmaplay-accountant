@@ -563,6 +563,13 @@ async function addToEntriesIndex(id){
   const ids = await loadKey(STORAGE_KEYS.entriesIndex, []);
   if(!ids.includes(id)){ ids.push(id); await saveKey(STORAGE_KEYS.entriesIndex, ids); }
 }
+async function addManyToEntriesIndex(newIds){
+  if(!newIds || newIds.length===0) return;
+  const ids = await loadKey(STORAGE_KEYS.entriesIndex, []);
+  const set = new Set(ids);
+  newIds.forEach(id=>set.add(id));
+  await saveKey(STORAGE_KEYS.entriesIndex, Array.from(set));
+}
 async function removeFromEntriesIndex(id){
   const ids = await loadKey(STORAGE_KEYS.entriesIndex, []);
   const filtered = ids.filter(x=>x!==id);
@@ -574,15 +581,22 @@ async function loadAllEntryDocs(){
   const results = await Promise.all(ids.map(id=>getEntryDocById(id)));
   return results.filter(e=>e!==null);
 }
-async function saveEntryDoc(entry){
+// Writes just the entry document, WITHOUT touching the shared index — use this for
+// bulk operations, then update the index once via addManyToEntriesIndex() afterwards
+// (calling addToEntriesIndex from many parallel saves races and can drop entries).
+async function saveEntryDocOnly(entry){
   try{
     const body = { fields: { data: { stringValue: JSON.stringify(entry) } } };
     const res = await fetch(`${FS_ENTRIES_BASE}/${encodeURIComponent(entry.id)}?updateMask.fieldPaths=data`, {
       method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
     });
-    if(!res.ok) throw new Error('save entry failed');
-    await addToEntriesIndex(entry.id);
-  }catch(e){ showToast('حصل خطأ أثناء حفظ القيد — ممكن يكون المرفق كبير قوي، جرب صورة أصغر'); }
+    return res.ok;
+  }catch(e){ return false; }
+}
+async function saveEntryDoc(entry){
+  const ok = await saveEntryDocOnly(entry);
+  if(!ok){ showToast('حصل خطأ أثناء حفظ القيد — ممكن يكون المرفق كبير قوي، جرب صورة أصغر'); return; }
+  await addToEntriesIndex(entry.id);
 }
 async function deleteEntryDoc(id){
   try{
@@ -665,7 +679,8 @@ async function initApp(){
       const knownIds = new Set(DB.entries.map(e=>e.id));
       const missing = legacy.filter(e=>!knownIds.has(e.id));
       if(missing.length>0){
-        await Promise.all(missing.map(e=>saveEntryDoc(e)));
+        await Promise.all(missing.map(e=>saveEntryDocOnly(e)));
+        await addManyToEntriesIndex(missing.map(e=>e.id));
         DB.entries = DB.entries.concat(missing);
       }
     }
@@ -1886,7 +1901,8 @@ async function importEntriesFromExcel(file){
 
   if(newEntries.length>0){
     DB.entries.push(...newEntries);
-    await Promise.all(newEntries.map(e=>saveEntryDoc(e)));
+    await Promise.all(newEntries.map(e=>saveEntryDocOnly(e)));
+    await addManyToEntriesIndex(newEntries.map(e=>e.id));
   }
   showToast(`تم استيراد ${successCount} قيد بنجاح${errors.length?` — وفشل ${errors.length}`:''}`);
   if(errors.length>0) showImportErrorsModal(errors, successCount);
