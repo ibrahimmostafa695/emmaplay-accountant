@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # Get current date and time (e.g., 2026-08-20 19:52)
 current_date=$(date +"%Y-%m-%d %H:%M")
 
@@ -7,3 +6,8 @@ current_date=$(date +"%Y-%m-%d %H:%M")
 git add .
 git commit -m "automatic commit $current_date"
 git push origin main
+
+echo ""
+echo "----------------------------------------"
+echo "خلصت العملية. اضغط Enter عشان تقفل النافذة."
+read
